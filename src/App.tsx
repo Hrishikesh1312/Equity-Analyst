@@ -3,9 +3,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import Navbar from "./components/Navbar";
 import SearchBar from "./components/SearchBar";
 import StockHeader, { StockHeaderSkeleton } from "./components/StockHeader";
-import MetricsBar, { MetricsBarSkeleton } from "./components/MetricsBar";
+import MetricsBar from "./components/MetricsBar";
+import ChartPanel from "./components/ChartPanel";
 import AiPanel from "./components/AiPanel";
-import { getStockInfo, StockInfo } from "./api/stock";
+import { getStockInfo, getHistory, StockInfo, HistoryResponse } from "./api/stock";
 import axios from "axios";
 
 export default function App() {
@@ -14,9 +15,12 @@ export default function App() {
   const [stock, setStock] = useState<StockInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [period, setPeriod] = useState("1mo");
+  const [period, setPeriod] = useState<"1d" | "1mo" | "6mo" | "1y" | "5y">("1mo");
+  const [history, setHistory] = useState<HistoryResponse | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [ollamaReady, setOllamaReady] = useState(false);
-  const [zoom, setZoom] = useState(115);
+  const [zoom, setZoom] = useState(100);
 
   // Apply zoom to document root
   useEffect(() => {
@@ -43,6 +47,8 @@ export default function App() {
     setLoading(true);
     setError(null);
     setStock(null);
+    setHistory(null);
+    setHistoryError(null);
     try {
       const data = await getStockInfo(t);
       setStock(data);
@@ -54,6 +60,30 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    if (!stock) return;
+
+    let isMounted = true;
+    setHistoryLoading(true);
+    setHistoryError(null);
+
+    getHistory(stock.ticker, period)
+      .then((data) => {
+        if (isMounted) setHistory(data);
+      })
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        if (isMounted) setHistoryError(`Could not load chart history. ${msg}`);
+      })
+      .finally(() => {
+        if (isMounted) setHistoryLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [stock, period]);
+
   return (
     <div
       className="flex flex-col h-screen overflow-hidden"
@@ -62,6 +92,8 @@ export default function App() {
         transformOrigin: "top left",
         width: `${10000 / zoom}%`,
         height: `${10000 / zoom}%`,
+        willChange: "transform",
+        backfaceVisibility: "hidden",
       }}
     >
       <Navbar
@@ -188,29 +220,25 @@ export default function App() {
                     {/* Metrics bar */}
                     <MetricsBar stock={stock} />
 
-                    {/* Chart placeholder */}
-                    <div
-                      className="flex flex-col items-center justify-center gap-3 mt-8"
-                      style={{ color: "var(--text-muted)" }}
-                    >
-                      <svg
-                        width="48"
-                        height="30"
-                        viewBox="0 0 48 30"
-                        fill="none"
-                      >
-                        <polyline
-                          points="2,24 10,16 18,20 28,8 36,12 46,2"
-                          stroke="var(--cyan)"
-                          strokeWidth="1.5"
-                          fill="none"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          opacity="0.5"
-                        />
-                      </svg>
-                      <p className="text-xs">Charts coming in Sprint 2</p>
-                    </div>
+                    <ChartPanel
+                      history={history}
+                      loading={historyLoading}
+                      error={historyError}
+                      onRetry={() => {
+                        if (stock) {
+                          setHistory(null);
+                          setHistoryLoading(true);
+                          setHistoryError(null);
+                          getHistory(stock.ticker, period)
+                            .then(setHistory)
+                            .catch((e: unknown) => {
+                              const msg = e instanceof Error ? e.message : "Unknown error";
+                              setHistoryError(`Could not load chart history. ${msg}`);
+                            })
+                            .finally(() => setHistoryLoading(false));
+                        }
+                      }}
+                    />
                   </motion.div>
                 )}
               </div>

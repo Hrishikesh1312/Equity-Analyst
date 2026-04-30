@@ -3,11 +3,11 @@ import { StockInfo, formatPrice, getRecommendationLabel } from "../api/stock";
 
 interface StockHeaderProps {
   stock: StockInfo;
-  period: string;
-  onPeriodChange: (p: string) => void;
+  period: "1d" | "1mo" | "6mo" | "1y" | "5y";
+  onPeriodChange: (p: "1d" | "1mo" | "6mo" | "1y" | "5y") => void;
 }
 
-const PERIODS = [
+const PERIODS: Array<{ label: string; value: "1d" | "1mo" | "6mo" | "1y" | "5y" }> = [
   { label: "1D", value: "1d" },
   { label: "1M", value: "1mo" },
   { label: "6M", value: "6mo" },

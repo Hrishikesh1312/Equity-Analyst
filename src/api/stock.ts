@@ -37,6 +37,12 @@ export interface PricePoint {
   low: number;
   close: number;
   volume: number;
+  rsi?: number | null;
+  macd?: number | null;
+  macd_signal?: number | null;
+  bb_upper?: number | null;
+  bb_middle?: number | null;
+  bb_lower?: number | null;
 }
 
 export interface HistoryResponse {

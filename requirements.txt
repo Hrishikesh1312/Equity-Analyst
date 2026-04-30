@@ -4,3 +4,4 @@ yfinance
 httpx
 pydantic
 pandas
+pandas-ta

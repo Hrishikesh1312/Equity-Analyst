@@ -6,6 +6,11 @@ import yfinance as yf
 import httpx
 import asyncio
 
+try:
+    import pandas_ta as ta
+except ImportError:
+    ta = None
+
 app = FastAPI(title="Equity Analyst API", version="1.0.0")
 
 app.add_middleware(
@@ -57,6 +62,12 @@ class PricePoint(BaseModel):
     low: float
     close: float
     volume: float
+    rsi: Optional[float] = None
+    macd: Optional[float] = None
+    macd_signal: Optional[float] = None
+    bb_upper: Optional[float] = None
+    bb_middle: Optional[float] = None
+    bb_lower: Optional[float] = None
 
 
 class HistoryResponse(BaseModel):
@@ -213,8 +224,21 @@ async def get_history(ticker: str, period: str = "1mo"):
         if hist.empty:
             raise HTTPException(status_code=404, detail=f"No history for '{t}'.")
 
+        rsi_series = None
+        macd_df = None
+        bb_df = None
+        if ta is not None:
+            try:
+                rsi_series = ta.rsi(hist["Close"], length=14)
+                macd_df = ta.macd(hist["Close"], fast=12, slow=26, signal=9)
+                bb_df = ta.bbands(hist["Close"], length=20, std=2)
+            except Exception:
+                rsi_series = None
+                macd_df = None
+                bb_df = None
+
         points: list[PricePoint] = []
-        for ts, row in hist.iterrows():
+        for idx, (ts, row) in enumerate(hist.iterrows()):
             points.append(PricePoint(
                 date=str(ts),
                 open=round(float(row["Open"]), 4),
@@ -222,6 +246,12 @@ async def get_history(ticker: str, period: str = "1mo"):
                 low=round(float(row["Low"]), 4),
                 close=round(float(row["Close"]), 4),
                 volume=float(row["Volume"]),
+                rsi=float(rsi_series.iloc[idx]) if rsi_series is not None and not rsi_series.iloc[idx] != rsi_series.iloc[idx] else None,
+                macd=float(macd_df.iloc[idx]["MACD_12_26_9"]) if macd_df is not None else None,
+                macd_signal=float(macd_df.iloc[idx]["MACDs_12_26_9"]) if macd_df is not None else None,
+                bb_upper=float(bb_df.iloc[idx]["BBU_20_2.0"]) if bb_df is not None else None,
+                bb_middle=float(bb_df.iloc[idx]["BBM_20_2.0"]) if bb_df is not None else None,
+                bb_lower=float(bb_df.iloc[idx]["BBL_20_2.0"]) if bb_df is not None else None,
             ))
 
         return HistoryResponse(ticker=t, period=period, data=points)

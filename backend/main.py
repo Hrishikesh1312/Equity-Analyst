@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+import json
 import yfinance as yf
 import httpx
 import asyncio
@@ -83,6 +84,34 @@ class SearchResult(BaseModel):
     type: str
 
 
+class AnalysisResponse(BaseModel):
+    summary: str
+    strengths: list[str]
+    weaknesses: list[str]
+    opportunities: list[str]
+    threats: list[str]
+    insights: list[str]
+    recommendation: str
+    valuation: str
+    analysis_text: Optional[str] = None
+
+
+class Message(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    ticker: str
+    question: str
+    history: list[Message] = []
+    analysis: Optional[AnalysisResponse] = None
+
+
+class ChatResponse(BaseModel):
+    answer: str
+
+
 class OllamaStatus(BaseModel):
     ready: bool
     model: str
@@ -111,6 +140,41 @@ def safe_int(val, default: int = 0) -> int:
         return int(val)
     except Exception:
         return default
+
+
+async def call_ollama(messages: list[dict], max_tokens: int = 700) -> str:
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        res = await client.post(
+            f"{OLLAMA_BASE}/api/completions",
+            json={
+                "model": OLLAMA_MODEL,
+                "messages": messages,
+                "temperature": 0.2,
+                "max_tokens": max_tokens,
+            },
+        )
+        res.raise_for_status()
+        data = res.json()
+
+    choice = (data.get("choices") or [{}])[0]
+    message = choice.get("message") or choice.get("content")
+    if isinstance(message, dict):
+        return message.get("content", "")
+    return message or ""
+
+
+def parse_json_from_text(text: str) -> Optional[dict]:
+    try:
+        return json.loads(text)
+    except Exception:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end >= 0 and end > start:
+            try:
+                return json.loads(text[start:end + 1])
+            except Exception:
+                return None
+    return None
 
 
 # ── Routes ──────────────────────────────────────────────────────────────────
@@ -246,7 +310,7 @@ async def get_history(ticker: str, period: str = "1mo"):
                 low=round(float(row["Low"]), 4),
                 close=round(float(row["Close"]), 4),
                 volume=float(row["Volume"]),
-                rsi=float(rsi_series.iloc[idx]) if rsi_series is not None and not rsi_series.iloc[idx] != rsi_series.iloc[idx] else None,
+                rsi=float(rsi_series.iloc[idx]) if rsi_series is not None and rsi_series.iloc[idx] == rsi_series.iloc[idx] else None,
                 macd=float(macd_df.iloc[idx]["MACD_12_26_9"]) if macd_df is not None else None,
                 macd_signal=float(macd_df.iloc[idx]["MACDs_12_26_9"]) if macd_df is not None else None,
                 bb_upper=float(bb_df.iloc[idx]["BBU_20_2.0"]) if bb_df is not None else None,
@@ -260,6 +324,115 @@ async def get_history(ticker: str, period: str = "1mo"):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/ai/analyze", response_model=AnalysisResponse)
+async def analyze_stock(ticker: str):
+    """Run AI analysis for a stock ticker."""
+    t = ticker.upper()
+    stock_info = await get_stock(t)
+    description = (stock_info.description or "No description available.").strip()
+    if len(description) > 1200:
+        description = description[:1200] + "..."
+
+    prompt = f"""
+You are a senior equity analyst. Produce a concise analysis for the stock {stock_info.ticker} ({stock_info.name}).
+Use the facts below and return valid JSON only with keys: summary, strengths, weaknesses, opportunities, threats, insights, recommendation, valuation.
+Facts:
+- Exchange: {stock_info.exchange}
+- Sector: {stock_info.sector}
+- Current price: {stock_info.current_price}
+- Previous close: {stock_info.previous_close}
+- Change %: {stock_info.change_pct:.2f}%
+- Market cap: {stock_info.market_cap}
+- P/E: {stock_info.pe_ratio or 'N/A'}
+- EPS: {stock_info.eps or 'N/A'}
+- 52W high/low: {stock_info.week_52_high}/{stock_info.week_52_low}
+- Dividend yield: {stock_info.dividend_yield or 'N/A'}
+- Analyst consensus: buy {stock_info.analyst_buy}, hold {stock_info.analyst_hold}, sell {stock_info.analyst_sell}
+- Target price: {stock_info.target_price or 'N/A'}
+- Business summary: {description}
+
+Write in a confident, actionable tone. Keep the summary and recommendation short. Use bullets for insights.
+"""
+
+    messages = [
+        {"role": "system", "content": "You are an expert equity analyst specialized in concise investment writeups."},
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        answer = await call_ollama(messages)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    parsed = parse_json_from_text(answer)
+    if parsed is None:
+        return AnalysisResponse(
+            summary=answer.strip(),
+            strengths=[],
+            weaknesses=[],
+            opportunities=[],
+            threats=[],
+            insights=[],
+            recommendation="See summary above.",
+            valuation="N/A",
+            analysis_text=answer.strip(),
+        )
+
+    return AnalysisResponse(
+        summary=str(parsed.get("summary", ""))[:2000],
+        strengths=parsed.get("strengths") or [],
+        weaknesses=parsed.get("weaknesses") or [],
+        opportunities=parsed.get("opportunities") or [],
+        threats=parsed.get("threats") or [],
+        insights=parsed.get("insights") or [],
+        recommendation=str(parsed.get("recommendation", "")),
+        valuation=str(parsed.get("valuation", "")),
+        analysis_text=answer.strip(),
+    )
+
+
+@app.post("/ai/chat", response_model=ChatResponse)
+async def ai_chat(request: ChatRequest):
+    if not request.ticker:
+        raise HTTPException(status_code=400, detail="Ticker is required.")
+
+    prompt_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a practical equity research assistant. Use the provided stock analysis and past conversation history to answer follow-up questions clearly "
+                "for an investor. If the user asks for a valuation or recommendation, use the analysis context and avoid repeating unrelated details."
+            ),
+        }
+    ]
+
+    if request.analysis is not None:
+        analysis_text = (
+            f"Analysis summary: {request.analysis.summary}\n"
+            f"Strengths: {', '.join(request.analysis.strengths)}\n"
+            f"Weaknesses: {', '.join(request.analysis.weaknesses)}\n"
+            f"Opportunities: {', '.join(request.analysis.opportunities)}\n"
+            f"Threats: {', '.join(request.analysis.threats)}\n"
+            f"Insights: {', '.join(request.analysis.insights)}\n"
+            f"Recommendation: {request.analysis.recommendation}\n"
+            f"Valuation: {request.analysis.valuation}\n"
+        )
+        prompt_messages.append({"role": "system", "content": analysis_text})
+
+    for message in request.history:
+        if message.role in {"user", "assistant"}:
+            prompt_messages.append({"role": message.role, "content": message.content})
+
+    prompt_messages.append({"role": "user", "content": request.question})
+
+    try:
+        answer = await call_ollama(prompt_messages)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return ChatResponse(answer=answer.strip())
 
 
 @app.get("/ollama/status", response_model=OllamaStatus)

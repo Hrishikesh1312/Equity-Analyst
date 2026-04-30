@@ -16,7 +16,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState("1mo");
   const [ollamaReady, setOllamaReady] = useState(false);
-  const [zoom, setZoom] = useState(100);
+  const [zoom, setZoom] = useState(115);
 
   // Apply zoom to document root
   useEffect(() => {

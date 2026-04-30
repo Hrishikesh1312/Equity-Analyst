@@ -7,8 +7,16 @@ A professional desktop equity research tool built with Tauri + React + FastAPI +
 ### 1. System dependencies (Tauri)
 ```bash
 sudo apt update
-sudo apt install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
-  build-essential curl wget libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+sudo apt update
+sudo apt install libwebkit2gtk-4.1-dev \
+  build-essential \
+  curl \
+  wget \
+  file \
+  libxdo-dev \
+  libssl-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev
 ```
 
 ### 2. Rust

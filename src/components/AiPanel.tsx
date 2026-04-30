@@ -89,7 +89,7 @@ export default function AiPanel({ ticker, ollamaReady }: AiPanelProps) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden p-4">
+      <div className="flex-1 overflow-y-auto p-4 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-white/20">
         {!ticker ? (
           <EmptyState />
         ) : !ollamaReady ? (
@@ -99,7 +99,7 @@ export default function AiPanel({ ticker, ollamaReady }: AiPanelProps) {
         ) : analysisError ? (
           <ErrorState message={analysisError} onRetry={() => setReloadKey((value) => value + 1)} />
         ) : analysis ? (
-          <div className="flex flex-col h-full gap-4 overflow-hidden">
+          <div className="flex flex-col gap-4 pb-2">
             <div className="rounded-3xl bg-[rgba(255,255,255,0.05)] p-4 border border-[rgba(255,255,255,0.08)] overflow-auto">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div>
@@ -152,8 +152,8 @@ export default function AiPanel({ ticker, ollamaReady }: AiPanelProps) {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-3xl bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] p-3">
-      <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "var(--text-muted)" }}>
+    <div className="rounded-3xl bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] p-3 min-w-0">
+      <div className="text-[10px] uppercase tracking-[0.12em] truncate" style={{ color: "var(--text-muted)" }}>
         {label}
       </div>
       <div className="mt-2 text-sm font-semibold" style={{ color: "var(--text-primary)" }}>

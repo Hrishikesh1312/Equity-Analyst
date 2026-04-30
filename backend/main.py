@@ -101,17 +101,6 @@ class Message(BaseModel):
     content: str
 
 
-class ChatRequest(BaseModel):
-    ticker: str
-    question: str
-    history: list[Message] = []
-    analysis: Optional[AnalysisResponse] = None
-
-
-class ChatResponse(BaseModel):
-    answer: str
-
-
 class OllamaStatus(BaseModel):
     ready: bool
     model: str
@@ -163,16 +152,33 @@ async def call_ollama(messages: list[dict], max_tokens: int = 700) -> str:
 
 
 def parse_json_from_text(text: str) -> Optional[dict]:
+    """Extract and parse JSON from text, handling various formats."""
+    import re
+
+    # First try direct JSON parsing
     try:
-        return json.loads(text)
+        return json.loads(text.strip())
     except Exception:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end >= 0 and end > start:
-            try:
-                return json.loads(text[start:end + 1])
-            except Exception:
-                return None
+        pass
+
+    # Look for JSON object in text
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end >= 0 and end > start:
+        try:
+            return json.loads(text[start:end + 1])
+        except Exception:
+            pass
+
+    # Try to find JSON with regex (more flexible)
+    json_pattern = r'\{.*\}'
+    match = re.search(json_pattern, text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except Exception:
+            pass
+
     return None
 
 
@@ -336,7 +342,22 @@ async def analyze_stock(ticker: str):
 
     prompt = f"""
 You are a senior equity analyst. Produce a concise analysis for the stock {stock_info.ticker} ({stock_info.name}).
-Use the facts below and return valid JSON only with keys: summary, strengths, weaknesses, opportunities, threats, insights, recommendation, valuation.
+Use the facts below and return ONLY valid JSON with these exact keys: summary, strengths, weaknesses, opportunities, threats, insights, recommendation, valuation.
+
+Each SWOT field must be an array of strings. Each insight must be a string. Summary, recommendation, and valuation must be strings.
+
+Example format:
+{{
+  "summary": "Brief overview of the company and current market position.",
+  "strengths": ["Strong brand recognition", "Growing market share"],
+  "weaknesses": ["High debt levels", "Dependence on key suppliers"],
+  "opportunities": ["Expansion into emerging markets", "New product launches"],
+  "threats": ["Increasing competition", "Regulatory changes"],
+  "insights": ["Revenue growth has been consistent", "Management has strong track record"],
+  "recommendation": "Buy/Hold/Sell",
+  "valuation": "Fairly valued/Undervalued/Overvalued"
+}}
+
 Facts:
 - Exchange: {stock_info.exchange}
 - Sector: {stock_info.sector}
@@ -367,71 +388,39 @@ Write in a confident, actionable tone. Keep the summary and recommendation short
 
     parsed = parse_json_from_text(answer)
     if parsed is None:
+        # Fallback: try to extract some basic info from the text
         return AnalysisResponse(
-            summary=answer.strip(),
-            strengths=[],
-            weaknesses=[],
-            opportunities=[],
-            threats=[],
-            insights=[],
-            recommendation="See summary above.",
+            summary=answer.strip()[:500] + "..." if len(answer.strip()) > 500 else answer.strip(),
+            strengths=["Analysis generated but SWOT parsing failed"],
+            weaknesses=["Analysis generated but SWOT parsing failed"],
+            opportunities=["Analysis generated but SWOT parsing failed"],
+            threats=["Analysis generated but SWOT parsing failed"],
+            insights=["Please check the summary for detailed analysis"],
+            recommendation="See summary above",
             valuation="N/A",
             analysis_text=answer.strip(),
         )
 
+    # Ensure all required fields are present and properly typed
+    def safe_list(value):
+        if isinstance(value, list):
+            return [str(item) for item in value if item]
+        return []
+
+    def safe_str(value, default=""):
+        return str(value) if value else default
+
     return AnalysisResponse(
-        summary=str(parsed.get("summary", ""))[:2000],
-        strengths=parsed.get("strengths") or [],
-        weaknesses=parsed.get("weaknesses") or [],
-        opportunities=parsed.get("opportunities") or [],
-        threats=parsed.get("threats") or [],
-        insights=parsed.get("insights") or [],
-        recommendation=str(parsed.get("recommendation", "")),
-        valuation=str(parsed.get("valuation", "")),
+        summary=safe_str(parsed.get("summary", ""))[:2000],
+        strengths=safe_list(parsed.get("strengths", [])),
+        weaknesses=safe_list(parsed.get("weaknesses", [])),
+        opportunities=safe_list(parsed.get("opportunities", [])),
+        threats=safe_list(parsed.get("threats", [])),
+        insights=safe_list(parsed.get("insights", [])),
+        recommendation=safe_str(parsed.get("recommendation", "")),
+        valuation=safe_str(parsed.get("valuation", "")),
         analysis_text=answer.strip(),
     )
-
-
-@app.post("/ai/chat", response_model=ChatResponse)
-async def ai_chat(request: ChatRequest):
-    if not request.ticker:
-        raise HTTPException(status_code=400, detail="Ticker is required.")
-
-    prompt_messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a practical equity research assistant. Use the provided stock analysis and past conversation history to answer follow-up questions clearly "
-                "for an investor. If the user asks for a valuation or recommendation, use the analysis context and avoid repeating unrelated details."
-            ),
-        }
-    ]
-
-    if request.analysis is not None:
-        analysis_text = (
-            f"Analysis summary: {request.analysis.summary}\n"
-            f"Strengths: {', '.join(request.analysis.strengths)}\n"
-            f"Weaknesses: {', '.join(request.analysis.weaknesses)}\n"
-            f"Opportunities: {', '.join(request.analysis.opportunities)}\n"
-            f"Threats: {', '.join(request.analysis.threats)}\n"
-            f"Insights: {', '.join(request.analysis.insights)}\n"
-            f"Recommendation: {request.analysis.recommendation}\n"
-            f"Valuation: {request.analysis.valuation}\n"
-        )
-        prompt_messages.append({"role": "system", "content": analysis_text})
-
-    for message in request.history:
-        if message.role in {"user", "assistant"}:
-            prompt_messages.append({"role": message.role, "content": message.content})
-
-    prompt_messages.append({"role": "user", "content": request.question})
-
-    try:
-        answer = await call_ollama(prompt_messages)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    return ChatResponse(answer=answer.strip())
 
 
 @app.get("/ollama/status", response_model=OllamaStatus)

@@ -1,17 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import axios from "axios";
 
 interface AiPanelProps {
   ticker: string | null;
   ollamaReady: boolean;
-}
-
-type Role = "system" | "user" | "assistant";
-
-interface ChatMessage {
-  role: Role;
-  text: string;
 }
 
 interface AnalysisResult {
@@ -32,19 +25,12 @@ export default function AiPanel({ ticker, ollamaReady }: AiPanelProps) {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [chatInput, setChatInput] = useState("");
-  const [chatLoading, setChatLoading] = useState(false);
-  const [chatError, setChatError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!ticker || !ollamaReady) {
       setAnalysis(null);
       setAnalysisError(null);
-      setChatMessages([]);
-      setChatInput("");
       return;
     }
 
@@ -52,23 +38,11 @@ export default function AiPanel({ ticker, ollamaReady }: AiPanelProps) {
       setAnalyzing(true);
       setAnalysisError(null);
       setAnalysis(null);
-      setChatMessages([]);
-      setChatInput("");
 
       try {
         const response = await axios.get(`${API_BASE}/ai/analyze`, { params: { ticker } });
         const payload = response.data as AnalysisResult;
         setAnalysis(payload);
-        setChatMessages([
-          {
-            role: "system",
-            text: "You are an equity analyst assistant. Answer follow-up questions based on the provided analysis.",
-          },
-          {
-            role: "assistant",
-            text: "I have completed the analysis. Ask a follow-up question about this stock.",
-          },
-        ]);
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unable to fetch AI analysis.";
         setAnalysisError(message);
@@ -79,49 +53,6 @@ export default function AiPanel({ ticker, ollamaReady }: AiPanelProps) {
 
     loadAnalysis();
   }, [ticker, ollamaReady, reloadKey]);
-
-  useEffect(() => {
-    if (chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [chatMessages]);
-
-  const canChat = !!analysis && !!ticker && !analyzing && ollamaReady;
-
-  const sendChat = async () => {
-    if (!chatInput.trim() || !ticker || !analysis) return;
-    const userMessage: ChatMessage = { role: "user", text: chatInput.trim() };
-    const nextMessages = [...chatMessages, userMessage];
-    setChatMessages(nextMessages);
-    setChatInput("");
-    setChatLoading(true);
-    setChatError(null);
-
-    try {
-      const response = await axios.post(`${API_BASE}/ai/chat`, {
-        ticker,
-        question: userMessage.text,
-        history: nextMessages.filter((message) => message.role !== "system"),
-        analysis,
-      });
-
-      const assistantText = response.data.answer as string;
-      setChatMessages((previous) => [...previous, { role: "assistant", text: assistantText }]);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Chat request failed.";
-      setChatError(message);
-    } finally {
-      setChatLoading(false);
-    }
-  };
-
-  const chatPlaceholder = !ollamaReady
-    ? "Ollama is offline. Start the server to chat."
-    : !ticker
-    ? "Search a ticker to begin AI analysis."
-    : analyzing
-    ? "Analyzing stock..."
-    : "Ask a follow-up question about the current stock.";
 
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--bg-surface)" }}>
@@ -196,44 +127,20 @@ export default function AiPanel({ ticker, ollamaReady }: AiPanelProps) {
               <SwotCard title="Threats" items={analysis.threats} color="var(--amber)" />
             </div>
 
-            <div className="flex flex-col flex-1 overflow-hidden rounded-3xl bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] p-3">
-              <div className="text-[11px] uppercase tracking-[0.18em] mb-3" style={{ color: "var(--text-muted)" }}>
-                Follow-up chat
+            {analysis.insights && analysis.insights.length > 0 && (
+              <div className="rounded-3xl bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] p-4">
+                <div className="text-[11px] uppercase tracking-[0.18em] mb-3" style={{ color: "var(--text-muted)" }}>
+                  Key insights
+                </div>
+                <div className="space-y-2">
+                  {analysis.insights.map((insight, index) => (
+                    <div key={index} className="text-[12px] leading-5" style={{ color: "var(--text-secondary)" }}>
+                      • {insight}
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="flex-1 overflow-y-auto pr-1">
-                {chatMessages.map((message, index) => (
-                  <ChatBubble key={`${message.role}-${index}`} message={message} />
-                ))}
-                <div ref={chatEndRef} />
-              </div>
-              <div className="mt-3 flex items-center gap-2">
-                <textarea
-                  value={chatInput}
-                  onChange={(event) => setChatInput(event.target.value)}
-                  rows={2}
-                  disabled={!canChat || chatLoading}
-                  className="flex-1 rounded-2xl bg-[rgba(0,0,0,0.15)] border border-[rgba(255,255,255,0.08)] px-3 py-2 text-xs text-white resize-none outline-none"
-                  placeholder={chatPlaceholder}
-                  style={{ color: "var(--text-primary)" }}
-                />
-                <button
-                  onClick={sendChat}
-                  disabled={!canChat || chatLoading || !chatInput.trim()}
-                  className="rounded-2xl px-4 py-2 text-xs font-semibold"
-                  style={{
-                    background: canChat ? "var(--cyan)" : "var(--bg-elevated)",
-                    color: canChat ? "#050A0F" : "var(--text-muted)",
-                    border: "1px solid var(--border)",
-                    cursor: canChat ? "pointer" : "not-allowed",
-                  }}
-                >
-                  {chatLoading ? "Sending..." : "Send"}
-                </button>
-              </div>
-              {chatError && (
-                <div className="mt-2 text-xs text-red-300">{chatError}</div>
-              )}
-            </div>
+            )}
           </div>
         ) : (
           <AwaitingAnalysis ticker={ticker} />
@@ -276,29 +183,6 @@ function SwotCard({ title, items, color }: { title: string; items: string[]; col
             • {item}
           </div>
         ))}
-      </div>
-    </div>
-  );
-}
-
-function ChatBubble({ message }: { message: ChatMessage }) {
-  const isUser = message.role === "user";
-  return (
-    <div className={`mb-3 flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div
-        className="max-w-full rounded-3xl p-3"
-        style={{
-          background: isUser ? "rgba(0,194,255,0.16)" : "rgba(255,255,255,0.08)",
-          color: "var(--text-secondary)",
-          border: `1px solid ${isUser ? "rgba(0,194,255,0.24)" : "rgba(255,255,255,0.08)"}`,
-        }}
-      >
-        <div className="text-[10px] uppercase tracking-[0.18em] mb-2" style={{ color: "var(--text-muted)" }}>
-          {isUser ? "You" : message.role === "assistant" ? "AI" : "System"}
-        </div>
-        <div className="text-[12px] leading-6" style={{ color: "var(--text-primary)" }}>
-          {message.text}
-        </div>
       </div>
     </div>
   );

@@ -146,7 +146,7 @@ export default function AiPanel({ ticker, ollamaReady }: AiPanelProps) {
             className="text-xs px-1.5 py-0.5 rounded"
             style={{ color: "var(--text-secondary)", background: "var(--bg-elevated)", border: "1px solid var(--border)" }}
           >
-            llama3.2:3b
+            llama3:latest
           </span>
         </div>
 
@@ -355,7 +355,7 @@ function OllamaOffline() {
       </p>
       <p className="text-xs leading-relaxed font-mono" style={{ color: "var(--text-muted)" }}>
         Run: <span style={{ color: "var(--cyan)" }}>ollama serve</span>
-        <br />then: <span style={{ color: "var(--cyan)" }}>ollama pull llama3.2:3b</span>
+        <br />then: <span style={{ color: "var(--cyan)" }}>ollama pull llama3:latest</span>
       </p>
     </motion.div>
   );

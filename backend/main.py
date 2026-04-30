@@ -23,7 +23,7 @@ app.add_middleware(
 )
 
 OLLAMA_BASE = "http://localhost:11434"
-OLLAMA_MODEL = "llama3.2:3b"
+OLLAMA_MODEL = "llama3:latest"
 
 
 # ── Models ─────────────────────────────────────────────────────────────────
@@ -145,22 +145,21 @@ def safe_int(val, default: int = 0) -> int:
 async def call_ollama(messages: list[dict], max_tokens: int = 700) -> str:
     async with httpx.AsyncClient(timeout=60.0) as client:
         res = await client.post(
-            f"{OLLAMA_BASE}/api/completions",
+            f"{OLLAMA_BASE}/api/chat",
             json={
                 "model": OLLAMA_MODEL,
                 "messages": messages,
+                "stream": False,
                 "temperature": 0.2,
-                "max_tokens": max_tokens,
             },
         )
         res.raise_for_status()
         data = res.json()
 
-    choice = (data.get("choices") or [{}])[0]
-    message = choice.get("message") or choice.get("content")
+    message = data.get("message", {})
     if isinstance(message, dict):
         return message.get("content", "")
-    return message or ""
+    return str(message) if message else ""
 
 
 def parse_json_from_text(text: str) -> Optional[dict]:

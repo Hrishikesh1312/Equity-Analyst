@@ -222,6 +222,7 @@ export default function App() {
 
                     <ChartPanel
                       history={history}
+                      stock={stock}
                       loading={historyLoading}
                       error={historyError}
                       onRetry={() => {

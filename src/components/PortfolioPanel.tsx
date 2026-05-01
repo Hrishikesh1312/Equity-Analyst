@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import axios from "axios";
 import {
   Position,
@@ -29,7 +29,6 @@ const API_BASE = "http://localhost:8000";
 export default function PortfolioPanel({ ollamaReady }: PortfolioPanelProps) {
   const [positions, setPositions] = useState<Position[]>([]);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [analysis, setAnalysis] = useState<PortfolioAnalysisResult | null>(
@@ -55,7 +54,6 @@ export default function PortfolioPanel({ ollamaReady }: PortfolioPanelProps) {
   // Recalculate portfolio when positions change
   useEffect(() => {
     if (positions.length > 0) {
-      setLoading(true);
       setError(null);
       setAnalysis(null);
       setChatMessages([]);
@@ -68,7 +66,6 @@ export default function PortfolioPanel({ ollamaReady }: PortfolioPanelProps) {
         .catch((e) => {
           setError(e instanceof Error ? e.message : "Failed to fetch prices");
         })
-        .finally(() => setLoading(false));
     } else {
       setPortfolio(null);
       setAnalysis(null);

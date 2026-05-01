@@ -23,7 +23,7 @@ app.add_middleware(
 )
 
 OLLAMA_BASE = "http://localhost:11434"
-OLLAMA_MODEL = "llama3:latest"
+OLLAMA_MODEL = "llama3.2:3b"
 
 
 # ── Models ─────────────────────────────────────────────────────────────────
@@ -105,6 +105,17 @@ class OllamaStatus(BaseModel):
     ready: bool
     model: str
     message: str
+
+
+class ChatRequest(BaseModel):
+    ticker: str
+    question: str
+    history: list[Message] = []
+    analysis: Optional[dict] = None
+
+
+class ChatResponse(BaseModel):
+    answer: str
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -342,7 +353,7 @@ async def analyze_stock(ticker: str):
 
     prompt = f"""
 You are a senior equity analyst. Produce a concise analysis for the stock {stock_info.ticker} ({stock_info.name}).
-Use the facts below and return ONLY valid JSON with these exact keys: summary, strengths, weaknesses, opportunities, threats, insights, recommendation, valuation.
+Use the facts below and return ONLY valid JSON with these exact keys: summary, strengths, weaknesses, opportunities, threats, insights, recommendation, valuation. RESPOND ONLY WITH VALID JSON. NO OTHER TEXT.
 
 Each SWOT field must be an array of strings. Each insight must be a string. Summary, recommendation, and valuation must be strings.
 
@@ -445,6 +456,49 @@ async def ollama_status():
         model=OLLAMA_MODEL,
         message="Ollama is not running. Run: ollama serve",
     )
+
+
+@app.post("/ai/chat", response_model=ChatResponse)
+async def ai_chat(request: ChatRequest):
+    if not request.ticker:
+        raise HTTPException(status_code=400, detail="Ticker is required.")
+
+    prompt_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a practical equity research assistant. Use the provided stock analysis and past conversation history to answer follow-up questions clearly "
+                "for an investor. If the user asks for a valuation or recommendation, use the analysis context and avoid repeating unrelated details."
+            ),
+        }
+    ]
+
+    if request.analysis is not None:
+        analysis_dict = request.analysis if isinstance(request.analysis, dict) else request.analysis.dict()
+        analysis_text = (
+            f"Analysis summary: {analysis_dict.get('summary', '')}\n"
+            f"Strengths: {', '.join(analysis_dict.get('strengths', []))}\n"
+            f"Weaknesses: {', '.join(analysis_dict.get('weaknesses', []))}\n"
+            f"Opportunities: {', '.join(analysis_dict.get('opportunities', []))}\n"
+            f"Threats: {', '.join(analysis_dict.get('threats', []))}\n"
+            f"Insights: {', '.join(analysis_dict.get('insights', []))}\n"
+            f"Recommendation: {analysis_dict.get('recommendation', '')}\n"
+            f"Valuation: {analysis_dict.get('valuation', '')}\n"
+        )
+        prompt_messages.append({"role": "system", "content": analysis_text})
+
+    for message in request.history:
+        if message.role in {"user", "assistant"}:
+            prompt_messages.append({"role": message.role, "content": message.content})
+
+    prompt_messages.append({"role": "user", "content": request.question})
+
+    try:
+        answer = await call_ollama(prompt_messages)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return ChatResponse(answer=answer.strip())
 
 
 if __name__ == "__main__":

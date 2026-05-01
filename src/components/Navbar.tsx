@@ -88,7 +88,7 @@ export default function Navbar({ activeTab, onTabChange, ollamaReady }: NavbarPr
           transition={{ repeat: Infinity, duration: 2.5 }}
         />
         <span style={{ fontSize: "11px", color: "rgba(232,238,242,0.5)" }}>
-          {ollamaReady ? "llama3:latest · ready" : "Ollama offline"}
+          {ollamaReady ? "llama3.2:3b · ready" : "Ollama offline"}
         </span>
       </div>
     </nav>

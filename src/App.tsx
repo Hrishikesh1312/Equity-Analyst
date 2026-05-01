@@ -6,6 +6,7 @@ import StockHeader, { StockHeaderSkeleton } from "./components/StockHeader";
 import MetricsBar from "./components/MetricsBar";
 import ChartPanel from "./components/ChartPanel";
 import AiPanel from "./components/AiPanel";
+import PortfolioPanel from "./components/PortfolioPanel";
 import { getStockInfo, getHistory, StockInfo, HistoryResponse } from "./api/stock";
 import axios from "axios";
 
@@ -101,12 +102,6 @@ export default function App() {
         onTabChange={setActiveTab}
         ollamaReady={ollamaReady}
       />
-      <SearchBar
-        onSearch={handleSearch}
-        loading={loading}
-        zoom={zoom}
-        onZoomChange={setZoom}
-      />
 
       <AnimatePresence mode="wait">
         {activeTab === "stock" ? (
@@ -116,29 +111,40 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="flex flex-1 min-h-0"
+            className="flex flex-col flex-1 min-h-0"
           >
+            <SearchBar
+              onSearch={handleSearch}
+              loading={loading}
+              zoom={zoom}
+              onZoomChange={setZoom}
+            />
+
+            {/* Stock analysis content */}
             {/* Left column */}
             <div
-              className="flex flex-col flex-1 min-w-0 overflow-hidden"
-              style={{ borderRight: "1px solid var(--border)" }}
+              className="flex flex-1 min-h-0"
             >
-              {/* Stock header */}
-              <AnimatePresence mode="wait">
-                {loading ? (
-                  <StockHeaderSkeleton key="header-skeleton" />
-                ) : stock ? (
-                  <StockHeader
-                    key={`header-${stock.ticker}`}
-                    stock={stock}
-                    period={period}
-                    onPeriodChange={setPeriod}
-                  />
-                ) : null}
-              </AnimatePresence>
+              <div
+                className="flex flex-col flex-1 min-w-0 overflow-hidden"
+                style={{ borderRight: "1px solid var(--border)" }}
+              >
+                {/* Stock header */}
+                <AnimatePresence mode="wait">
+                  {loading ? (
+                    <StockHeaderSkeleton key="header-skeleton" />
+                  ) : stock ? (
+                    <StockHeader
+                      key={`header-${stock.ticker}`}
+                      stock={stock}
+                      period={period}
+                      onPeriodChange={setPeriod}
+                    />
+                  ) : null}
+                </AnimatePresence>
 
-              {/* Chart area placeholder - filled in Sprint 2 */}
-              <div className="flex-1 overflow-hidden relative">
+                {/* Chart area placeholder - filled in Sprint 2 */}
+              <div className="flex-1 overflow-y-auto relative">
                 {error && (
                   <div className="flex items-center justify-center h-full">
                     <div
@@ -249,6 +255,7 @@ export default function App() {
             <div className="w-80 shrink-0 flex flex-col overflow-hidden">
               <AiPanel ticker={ticker} ollamaReady={ollamaReady} />
             </div>
+            </div>
           </motion.div>
         ) : (
           <motion.div
@@ -257,19 +264,9 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="flex-1 flex items-center justify-center"
+            className="flex-1 flex flex-col overflow-hidden"
           >
-            <div className="text-center">
-              <p
-                className="text-sm font-medium mb-1"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                Portfolio tab
-              </p>
-              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                Coming in Sprint 4
-              </p>
-            </div>
+            <PortfolioPanel ollamaReady={ollamaReady} />
           </motion.div>
         )}
       </AnimatePresence>

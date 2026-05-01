@@ -498,6 +498,200 @@ async def ai_chat(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+    return ChatResponse(answer=answer.strip())
+
+
+# ── Portfolio Routes ─────────────────────────────────────────────────────────
+
+class PortfolioPosition(BaseModel):
+    id: str
+    ticker: str
+    quantity: float
+    buy_price: float
+    current_price: Optional[float] = None
+    sector: Optional[str] = None
+    name: Optional[str] = None
+
+
+class PortfolioData(BaseModel):
+    positions: list[PortfolioPosition]
+    total_invested: float
+    total_current_value: float
+    total_gain_loss: float
+    total_gain_loss_pct: float
+    sector_allocation: dict[str, float]
+
+
+class PortfolioAnalysisResponse(BaseModel):
+    summary: str
+    risks: list[str]
+    opportunities: list[str]
+    sector_balance: str
+    concentration: str
+    recommendations: list[str]
+    suggested_rebalance: Optional[str] = None
+
+
+class PortfolioPriceRequest(BaseModel):
+    tickers: list[str]
+
+
+@app.post("/portfolio/prices")
+async def get_portfolio_prices(request: PortfolioPriceRequest):
+    """Fetch current prices for portfolio tickers."""
+    result = {}
+
+    for ticker in request.tickers:
+        try:
+            yf_ticker = yf.Ticker(ticker)
+            info = yf_ticker.info
+            current = safe_float(info.get("currentPrice") or info.get("regularMarketPrice")) or 0.0
+            sector = info.get("sector") or "Unknown"
+            name = info.get("longName") or ticker
+
+            result[ticker] = {
+                "price": current,
+                "sector": sector,
+                "name": name,
+            }
+        except Exception:
+            result[ticker] = {
+                "price": 0.0,
+                "sector": "Unknown",
+                "name": ticker,
+            }
+
+    return result
+
+
+@app.post("/portfolio/analyze", response_model=PortfolioAnalysisResponse)
+async def analyze_portfolio(portfolio: PortfolioData):
+    """Analyze portfolio for concentration risk, sector balance, and rebalancing."""
+    total_value = portfolio.total_current_value or 1.0
+
+    # Calculate concentration
+    top_3_value = sorted(
+        [p.quantity * (p.current_price or p.buy_price) for p in portfolio.positions],
+        reverse=True,
+    )[:3]
+    top_3_pct = sum(top_3_value) / total_value * 100 if total_value > 0 else 0
+
+    # Sector concentration
+    sector_details = []
+    for sector, value in sorted(
+        portfolio.sector_allocation.items(), key=lambda x: x[1], reverse=True
+    )[:3]:
+        pct = (value / total_value * 100) if total_value > 0 else 0
+        sector_details.append(f"{sector}: {pct:.1f}%")
+
+    prompt = f"""
+You are a portfolio advisor. Analyze this portfolio and return ONLY valid JSON with keys: summary, risks, opportunities, sector_balance, concentration, recommendations, suggested_rebalance.
+
+Portfolio Summary:
+- Total Invested: {portfolio.total_invested}
+- Current Value: {portfolio.total_current_value}
+- Gain/Loss: {portfolio.total_gain_loss} ({portfolio.total_gain_loss_pct:.2f}%)
+- Top 3 holdings: {top_3_pct:.1f}% of portfolio
+- Sector breakdown: {', '.join(sector_details)}
+- Number of holdings: {len(portfolio.positions)}
+
+Example format:
+{{
+  "summary": "Brief portfolio overview",
+  "risks": ["Risk 1", "Risk 2"],
+  "opportunities": ["Opportunity 1"],
+  "sector_balance": "Assessment of sector diversification",
+  "concentration": "Assessment of concentration risk",
+  "recommendations": ["Recommendation 1"],
+  "suggested_rebalance": "Specific rebalancing suggestion or null"
+}}
+
+Provide concise, actionable advice for an Indian investor.
+"""
+
+    messages = [
+        {
+            "role": "system",
+            "content": "You are an expert portfolio advisor specializing in Indian equity markets.",
+        },
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        answer = await call_ollama(messages)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    parsed = parse_json_from_text(answer)
+    if parsed is None:
+        return PortfolioAnalysisResponse(
+            summary=answer.strip()[:500],
+            risks=["Analysis generated but parsing failed"],
+            opportunities=[],
+            sector_balance="See summary",
+            concentration="See summary",
+            recommendations=[],
+        )
+
+    def safe_list(value):
+        if isinstance(value, list):
+            return [str(item) for item in value if item]
+        return []
+
+    def safe_str(value, default=""):
+        return str(value) if value else default
+
+    return PortfolioAnalysisResponse(
+        summary=safe_str(parsed.get("summary", ""))[:2000],
+        risks=safe_list(parsed.get("risks", [])),
+        opportunities=safe_list(parsed.get("opportunities", [])),
+        sector_balance=safe_str(parsed.get("sector_balance", "")),
+        concentration=safe_str(parsed.get("concentration", "")),
+        recommendations=safe_list(parsed.get("recommendations", [])),
+        suggested_rebalance=safe_str(parsed.get("suggested_rebalance")),
+    )
+
+
+class PortfolioChatRequest(BaseModel):
+    question: str
+    history: list[Message] = []
+    portfolio: PortfolioData
+    analysis: Optional[dict] = None
+
+
+@app.post("/portfolio/chat")
+async def portfolio_chat(request: PortfolioChatRequest):
+    """Chat about portfolio analysis."""
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a portfolio advisor helping with questions about portfolio composition, diversification, and rebalancing.",
+        }
+    ]
+
+    # Add portfolio context
+    if request.analysis:
+        analysis_text = (
+            f"Portfolio Analysis:\n"
+            f"Summary: {request.analysis.get('summary', '')}\n"
+            f"Risks: {', '.join(request.analysis.get('risks', []))}\n"
+            f"Recommendations: {', '.join(request.analysis.get('recommendations', []))}\n"
+        )
+        messages.append({"role": "system", "content": analysis_text})
+
+    # Add chat history
+    for msg in request.history:
+        if msg.role in {"user", "assistant"}:
+            messages.append({"role": msg.role, "content": msg.content})
+
+    messages.append({"role": "user", "content": request.question})
+
+    try:
+        answer = await call_ollama(messages)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
     return ChatResponse(answer=answer.strip())
 
 

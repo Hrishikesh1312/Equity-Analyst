@@ -1,8 +1,8 @@
 import { motion } from "framer-motion";
 
 interface NavbarProps {
-  activeTab: "stock" | "portfolio";
-  onTabChange: (tab: "stock" | "portfolio") => void;
+  activeTab: "stock" | "portfolio" | "networth";
+  onTabChange: (tab: "stock" | "portfolio" | "networth") => void;
   ollamaReady: boolean;
 }
 
@@ -48,7 +48,7 @@ export default function Navbar({ activeTab, onTabChange, ollamaReady }: NavbarPr
         display: "flex", borderRadius: "8px", padding: "3px", gap: "2px",
         background: "rgba(0,0,0,0.25)", border: "1px solid rgba(201,168,76,0.15)",
       }}>
-        {(["stock", "portfolio"] as const).map((tab) => {
+        {(["stock", "portfolio", "networth"] as const).map((tab) => {
           const active = activeTab === tab;
           return (
             <motion.button
@@ -70,7 +70,7 @@ export default function Navbar({ activeTab, onTabChange, ollamaReady }: NavbarPr
                 />
               )}
               <span style={{ position: "relative", zIndex: 1 }}>
-                {tab === "stock" ? "Stock Analysis" : "Portfolio"}
+                {tab === "stock" ? "Stock Analysis" : tab === "portfolio" ? "Portfolio" : "Net Worth"}
               </span>
             </motion.button>
           );

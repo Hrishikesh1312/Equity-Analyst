@@ -7,11 +7,14 @@ import MetricsBar from "./components/MetricsBar";
 import ChartPanel from "./components/ChartPanel";
 import AiPanel from "./components/AiPanel";
 import PortfolioPanel from "./components/PortfolioPanel";
+import NetWorthPanel from "./components/NetWorthPanel";
 import { getStockInfo, getHistory, StockInfo, HistoryResponse } from "./api/stock";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { exportNetWorthExcel } from "./api/networth";
 import axios from "axios";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"stock" | "portfolio">("stock");
+  const [activeTab, setActiveTab] = useState<"stock" | "portfolio" | "networth">("stock");
   const [ticker, setTicker] = useState<string | null>(null);
   const [stock, setStock] = useState<StockInfo | null>(null);
   const [loading, setLoading] = useState(false);
@@ -41,6 +44,36 @@ export default function App() {
     checkOllama();
     const interval = setInterval(checkOllama, 10000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Setup Tauri lifecycle for networth export on app close
+  useEffect(() => {
+    let unlistenFn: (() => void) | null = null;
+    
+    const setupListener = async () => {
+      try {
+        const window = WebviewWindow.getCurrent();
+        unlistenFn = await window.onCloseRequested(async () => {
+          try {
+            console.log("App closing - exporting networth data...");
+            await exportNetWorthExcel();
+            console.log("Networth data exported successfully");
+          } catch (err) {
+            console.error("Failed to export networth data:", err);
+          }
+        });
+      } catch (err) {
+        console.error("Failed to setup close listener:", err);
+      }
+    };
+
+    setupListener();
+
+    return () => {
+      if (unlistenFn) {
+        unlistenFn();
+      }
+    };
   }, []);
 
   const handleSearch = async (t: string) => {
@@ -257,7 +290,7 @@ export default function App() {
             </div>
             </div>
           </motion.div>
-        ) : (
+        ) : activeTab === "portfolio" ? (
           <motion.div
             key="portfolio"
             initial={{ opacity: 0 }}
@@ -267,6 +300,17 @@ export default function App() {
             className="flex-1 flex flex-col overflow-hidden"
           >
             <PortfolioPanel ollamaReady={ollamaReady} />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="networth"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="flex-1 flex flex-col overflow-hidden"
+          >
+            <NetWorthPanel ollamaReady={ollamaReady} />
           </motion.div>
         )}
       </AnimatePresence>

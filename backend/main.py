@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -6,11 +6,22 @@ import json
 import yfinance as yf
 import httpx
 import asyncio
+import os
+from pathlib import Path
+from datetime import datetime
+from io import BytesIO
 
 try:
     import pandas_ta as ta
 except ImportError:
     ta = None
+
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+except ImportError:
+    Workbook = None
 
 app = FastAPI(title="Equity Analyst API", version="1.0.0")
 
@@ -660,6 +671,62 @@ class PortfolioChatRequest(BaseModel):
     analysis: Optional[dict] = None
 
 
+# ── NetWorth Models ────────────────────────────────────────────────────────
+
+class NetWorthInvestment(BaseModel):
+    id: str
+    ticker: str
+    quantity: float
+    current_price: Optional[float] = None
+    purchase_date: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class NetWorthOtherAsset(BaseModel):
+    id: str
+    name: str
+    amount: float
+    type: str  # RD, FD, Gold, Crypto, etc.
+    purchase_date: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class NetWorthData(BaseModel):
+    bank_balance: float
+    investments: list[NetWorthInvestment] = []
+    other_assets: list[NetWorthOtherAsset] = []
+    last_updated: str = ""
+
+
+NETWORTH_DATA_FILE = Path.home() / ".equity-analyst" / "networth.json"
+
+
+def ensure_networth_dir():
+    """Ensure the networth data directory exists."""
+    NETWORTH_DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+
+def load_networth_data() -> NetWorthData:
+    """Load networth data from file."""
+    ensure_networth_dir()
+    if NETWORTH_DATA_FILE.exists():
+        try:
+            with open(NETWORTH_DATA_FILE, "r") as f:
+                data = json.load(f)
+                return NetWorthData(**data)
+        except Exception as e:
+            print(f"Error loading networth data: {e}")
+    return NetWorthData(bank_balance=0.0)
+
+
+def save_networth_data(data: NetWorthData):
+    """Save networth data to file."""
+    ensure_networth_dir()
+    data.last_updated = datetime.now().isoformat()
+    with open(NETWORTH_DATA_FILE, "w") as f:
+        json.dump(data.dict(), f, indent=2)
+
+
 @app.post("/portfolio/chat")
 async def portfolio_chat(request: PortfolioChatRequest):
     """Chat about portfolio analysis."""
@@ -693,6 +760,211 @@ async def portfolio_chat(request: PortfolioChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
     return ChatResponse(answer=answer.strip())
+
+
+# ── NetWorth Routes ────────────────────────────────────────────────────────
+
+@app.get("/networth/data")
+async def get_networth_data():
+    """Get current networth data."""
+    data = load_networth_data()
+    
+    # Fetch current prices for investments
+    if data.investments:
+        tickers = [inv.ticker for inv in data.investments]
+        try:
+            for inv in data.investments:
+                yf_ticker = yf.Ticker(inv.ticker)
+                inv.current_price = safe_float(
+                    yf_ticker.info.get("currentPrice") or 
+                    yf_ticker.info.get("regularMarketPrice")
+                ) or inv.current_price or 0.0
+        except Exception as e:
+            print(f"Error fetching prices: {e}")
+    
+    return data
+
+
+@app.post("/networth/save")
+async def save_networth(data: NetWorthData):
+    """Save networth data."""
+    try:
+        save_networth_data(data)
+        return {"status": "ok", "message": "Networth data saved"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/networth/valuations")
+async def get_networth_valuations(tickers: list[str]):
+    """Get current valuations for multiple tickers."""
+    valuations = {}
+    for ticker in tickers:
+        try:
+            yf_ticker = yf.Ticker(ticker.upper())
+            price = safe_float(
+                yf_ticker.info.get("currentPrice") or 
+                yf_ticker.info.get("regularMarketPrice")
+            ) or 0.0
+            valuations[ticker.upper()] = {
+                "price": price,
+                "currency": yf_ticker.info.get("currency", "INR"),
+                "name": yf_ticker.info.get("longName") or ticker.upper()
+            }
+        except Exception as e:
+            valuations[ticker.upper()] = {"error": str(e), "price": None}
+    
+    return valuations
+
+
+@app.post("/networth/export")
+async def export_networth_excel():
+    """Export networth data to Excel file."""
+    if not Workbook:
+        raise HTTPException(status_code=500, detail="openpyxl not installed")
+    
+    data = load_networth_data()
+    
+    try:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Net Worth"
+        
+        # Header style
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        
+        # Summary section
+        ws['A1'] = "Net Worth Summary"
+        ws['A1'].font = Font(bold=True, size=14)
+        ws['A2'] = f"As of: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        # Bank Balance
+        ws['A4'] = "Bank Balance"
+        ws['A4'].font = Font(bold=True)
+        ws['B4'] = data.bank_balance
+        ws['B4'].number_format = '#,##0.00'
+        
+        # Investments section
+        row = 6
+        ws[f'A{row}'] = "Investments"
+        ws[f'A{row}'].font = Font(bold=True, size=12)
+        
+        row += 1
+        headers = ['Ticker', 'Quantity', 'Current Price', 'Value', 'Notes']
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=row, column=col)
+            cell.value = header
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+        
+        row += 1
+        total_investment_value = 0
+        for inv in data.investments:
+            current_price = inv.current_price or 0.0
+            value = inv.quantity * current_price
+            total_investment_value += value
+            
+            ws.cell(row=row, column=1).value = inv.ticker
+            ws.cell(row=row, column=2).value = inv.quantity
+            ws.cell(row=row, column=2).number_format = '#,##0.00'
+            ws.cell(row=row, column=3).value = current_price
+            ws.cell(row=row, column=3).number_format = '#,##0.00'
+            ws.cell(row=row, column=4).value = value
+            ws.cell(row=row, column=4).number_format = '#,##0.00'
+            ws.cell(row=row, column=5).value = inv.notes or ""
+            row += 1
+        
+        # Total row
+        ws.cell(row=row, column=1).value = "TOTAL"
+        ws.cell(row=row, column=1).font = Font(bold=True)
+        ws.cell(row=row, column=4).value = total_investment_value
+        ws.cell(row=row, column=4).font = Font(bold=True)
+        ws.cell(row=row, column=4).number_format = '#,##0.00'
+        
+        # Other Assets section
+        row += 3
+        ws[f'A{row}'] = "Other Assets (RD, FD, etc.)"
+        ws[f'A{row}'].font = Font(bold=True, size=12)
+        
+        row += 1
+        headers = ['Type', 'Amount', 'Notes']
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=row, column=col)
+            cell.value = header
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+        
+        row += 1
+        total_other_assets = 0
+        for asset in data.other_assets:
+            total_other_assets += asset.amount
+            ws.cell(row=row, column=1).value = f"{asset.type}: {asset.name}"
+            ws.cell(row=row, column=2).value = asset.amount
+            ws.cell(row=row, column=2).number_format = '#,##0.00'
+            ws.cell(row=row, column=3).value = asset.notes or ""
+            row += 1
+        
+        # Total row
+        ws.cell(row=row, column=1).value = "TOTAL"
+        ws.cell(row=row, column=1).font = Font(bold=True)
+        ws.cell(row=row, column=2).value = total_other_assets
+        ws.cell(row=row, column=2).font = Font(bold=True)
+        ws.cell(row=row, column=2).number_format = '#,##0.00'
+        
+        # Summary at bottom
+        row += 3
+        ws[f'A{row}'] = "Total Net Worth Breakdown"
+        ws[f'A{row}'].font = Font(bold=True, size=12)
+        
+        row += 1
+        ws[f'A{row}'] = "Bank Balance:"
+        ws[f'B{row}'] = data.bank_balance
+        ws[f'B{row}'].number_format = '#,##0.00'
+        
+        row += 1
+        ws[f'A{row}'] = "Investments Value:"
+        ws[f'B{row}'] = total_investment_value
+        ws[f'B{row}'].number_format = '#,##0.00'
+        
+        row += 1
+        ws[f'A{row}'] = "Other Assets:"
+        ws[f'B{row}'] = total_other_assets
+        ws[f'B{row}'].number_format = '#,##0.00'
+        
+        row += 1
+        total_networth = data.bank_balance + total_investment_value + total_other_assets
+        ws[f'A{row}'] = "TOTAL NET WORTH"
+        ws[f'A{row}'].font = Font(bold=True, size=12, color="FFFFFF")
+        ws[f'A{row}'].fill = PatternFill(start_color="70AD47", end_color="70AD47", fill_type="solid")
+        ws[f'B{row}'] = total_networth
+        ws[f'B{row}'].font = Font(bold=True, size=12, color="FFFFFF")
+        ws[f'B{row}'].fill = PatternFill(start_color="70AD47", end_color="70AD47", fill_type="solid")
+        ws[f'B{row}'].number_format = '#,##0.00'
+        
+        # Adjust column widths
+        ws.column_dimensions['A'].width = 25
+        ws.column_dimensions['B'].width = 15
+        ws.column_dimensions['C'].width = 15
+        ws.column_dimensions['D'].width = 15
+        ws.column_dimensions['E'].width = 30
+        
+        # Save to file
+        file_path = Path.home() / ".equity-analyst" / f"networth_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        ensure_networth_dir()
+        wb.save(file_path)
+        
+        return {
+            "status": "ok",
+            "message": "Excel file created",
+            "file_path": str(file_path),
+            "total_networth": total_networth
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
